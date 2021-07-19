@@ -79,10 +79,8 @@ class BrainnomalyDataset(data.Dataset):
         image = sitk.ReadImage(pref)
         nda = sitk.GetArrayFromImage(image)
         
-        
         for fr in self.samples[index][1]:
-            nda[fr]
-            img = nda[fr]
+            img = nda[fr-1]
             img = resize(img, output_shape=(256, 384), preserve_range=True)
             frame = np.uint8(img)
             sample.append(frame)
