@@ -31,7 +31,7 @@ from pytorch_lightning.metrics.functional import accuracy
 # %% [markdown]
 # ---
 # ## Data
-
+import SimpleITK as sitk
 
 # %%
 from PIL import Image
@@ -40,7 +40,7 @@ import os
 import torchvision.transforms as transforms
 import torch
 
-class UCSDAnomalyDataset(data.Dataset):
+class BrainnomalyDataset(data.Dataset):
     '''
     Dataset class to load  UCSD Anomaly Detection dataset
     Input: 
@@ -55,20 +55,19 @@ class UCSDAnomalyDataset(data.Dataset):
     [mean, std] for grayscale pixels is [0.3750352255196134, 0.20129592430286292]
     '''
     def __init__(self, root_dir, seq_len = 16, time_stride=1, transform=None):
-        super(UCSDAnomalyDataset, self).__init__()
+        super(BrainnomalyDataset, self).__init__()
         self.root_dir = root_dir
-        vids = [d for d in os.listdir(self.root_dir) if os.path.isdir(os.path.join(self.root_dir, d))]
+        brains = sorted([d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))])
         self.samples = []
-        for d in vids:
-            img_list = sorted(glob(join(root_dir + '/'+  d, '*.tif')))
-
-            n_imgs = len(img_list)
-
+        for d in brains:
+            img_list = glob(join(root_dir,d,'output/target1','*new_MNI.img'))
+            image = sitk.ReadImage(img_list[0])
+            n_imgs = image.GetSize()[0]
             for t in range(1, time_stride+1):
                 for i in range(1, n_imgs):
                     if i+(seq_len-1)*t > n_imgs:
                         break
-                    self.samples.append((os.path.join(self.root_dir, d), range(i, i+(seq_len-1)*t+1, t)))
+                    self.samples.append((img_list[0], range(i, i+(seq_len-1)*t+1, t)))
         self.pil_transform = transforms.Compose([
                     ToFloatTensor3D(),
                      ToCrops((1, 16, 256, 384), (1, 8, 32, 32))])
@@ -77,12 +76,16 @@ class UCSDAnomalyDataset(data.Dataset):
     def __getitem__(self, index):
         sample = []
         pref = self.samples[index][0]
+        image = sitk.ReadImage(pref)
+        nda = sitk.GetArrayFromImage(image)
+        
+        
         for fr in self.samples[index][1]:
-            with open(os.path.join(pref, '{0:03d}.tif'.format(fr)), 'rb') as fin:
-                img = io.imread(fin)
-                img = resize(img, output_shape=(256, 384), preserve_range=True)
-                frame = np.uint8(img)
-                sample.append(frame)
+            nda[fr]
+            img = nda[fr]
+            img = resize(img, output_shape=(256, 384), preserve_range=True)
+            frame = np.uint8(img)
+            sample.append(frame)
         sample = np.stack(sample, axis=0)
         clip = np.expand_dims(sample, axis=-1)
         sample = clip, clip
@@ -94,6 +97,7 @@ class UCSDAnomalyDataset(data.Dataset):
 
     def __len__(self):
         return len(self.samples)
+
 
 # %% [markdown]
 # ---
@@ -294,18 +298,16 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 tb_logger = TensorBoardLogger('logs/')
 # init model
 ae = LitAutoEncoder()
-# wandb_logger = WandbLogger() 
+wandb_logger = WandbLogger() 
 # Initialize a trainer
 
-trainer = pl.Trainer(gpus=1, max_epochs=10, progress_bar_refresh_rate=20,logger=tb_logger,
-resume_from_checkpoint='/mnt/luowh/june/novelty-detection/wandb/run-20210714_173838-3bdchcum/files/novelty-detection/3bdchcum/checkpoints/epoch=9-step=23099.ckpt'
-)
+trainer = pl.Trainer(gpus=[2], max_epochs=10, progress_bar_refresh_rate=20,logger=wandb_logger,)
 
-train = DataLoader(UCSDAnomalyDataset('data/UCSD_Anomaly_Dataset.v1p2/UCSDped2/Train'),num_workers =16,pin_memory=True)
-test = DataLoader(UCSDAnomalyDataset('data/UCSD_Anomaly_Dataset.v1p2/UCSDped2/Test1'),num_workers =16,pin_memory=True)
+train = DataLoader(BrainnomalyDataset('/mnt/luowh/data/nc/'),num_workers =16,pin_memory=True)
+# test = DataLoader(BrainnomalyDataset('data/UCSD_Anomaly_Dataset.v1p2/UCSDped2/Test1'),num_workers =16,pin_memory=True)
 # Train the model ⚡
 trainer.fit(ae, train)
 
-trainer.test(ae,test_dataloaders=test)
+# trainer.test(ae,test_dataloaders=test)
 
 # %%
