@@ -16,18 +16,16 @@ import pytorch_lightning as pl
 import torch.utils.data as data
 import os
 import SimpleITK as sitk
-# %%
-
-# from pl_bolts.datasets import DummyDataset
-
+import torchvision.transforms as transforms
+from sklearn.metrics import roc_auc_score
 # %% [markdown]
 # ---
 # ## Data
 
 
-# %%
 
-class BrainnomalyDataset(data.Dataset):
+# %%
+class BrainnomalyTestDataset(data.Dataset):
     '''
     Dataset class to load  UCSD Anomaly Detection dataset
     Input: 
@@ -42,19 +40,20 @@ class BrainnomalyDataset(data.Dataset):
     [mean, std] for grayscale pixels is [0.3750352255196134, 0.20129592430286292]
     '''
     def __init__(self, root_dir, seq_len = 16, time_stride=1, transform=None):
-        super(BrainnomalyDataset, self).__init__()
+        super(BrainnomalyTestDataset, self).__init__()
         self.root_dir = root_dir
-        brains = sorted([d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))])
+        # brains = sorted([d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))])
         self.samples = []
-        for d in brains:
-            img_list = glob(join(root_dir,d,'output/target1','*new_MNI.img'))
-            image = sitk.ReadImage(img_list[0])
-            n_imgs = image.GetSize()[0]
-            for t in range(1, time_stride+1):
-                for i in range(1, n_imgs):
-                    if i+(seq_len-1)*t > n_imgs:
-                        break
-                    self.samples.append((img_list[0], range(i, i+(seq_len-1)*t+1, t)))
+        # for d in brains:
+        img_list = glob(join(root_dir,'*t1.nii.gz'))
+        image = sitk.ReadImage(img_list[0])
+        nda = sitk.GetArrayFromImage(image)
+        n_imgs = nda.shape[0]
+        for t in range(1, time_stride+1):
+            for i in range(1, n_imgs):
+                if i+(seq_len-1)*t > n_imgs:
+                    break
+                self.samples.append((img_list[0], range(i, i+(seq_len-1)*t+1, t)))
         self.pil_transform = transforms.Compose([
                     ToFloatTensor3D(),
                      ToCrops((1, 16, 256, 384), (1, 8, 32, 32))])
@@ -82,7 +81,6 @@ class BrainnomalyDataset(data.Dataset):
 
     def __len__(self):
         return len(self.samples)
-
 
 # %% [markdown]
 # ---
@@ -184,10 +182,8 @@ class LitAutoEncoder(pl.LightningModule):
         self.results_accumulator_llk = ResultsAccumulator(time_steps=16)
         self.results_accumulator_rec = ResultsAccumulator(time_steps=16)
 
-        self.sample_llk = np.zeros(shape=(150,))
-        self.sample_rec = np.zeros(shape=(150,))
-
-
+        self.sample_llk = np.zeros(shape=(155,))
+        self.sample_rec = np.zeros(shape=(155,))
 
 
 
@@ -236,8 +232,8 @@ class LitAutoEncoder(pl.LightningModule):
         print('计算nvelty score')
         results_accumulator_llk = self.results_accumulator_llk
         results_accumulator_rec = self.results_accumulator_rec
-        sample_llk = self.sample_llk
-        sample_rec = self.sample_rec
+        sample_llk =self.sample_llk
+        sample_rec =self.sample_rec
 
         while results_accumulator_llk.results_left != 0:
             index = (- results_accumulator_llk.results_left)
@@ -249,9 +245,9 @@ class LitAutoEncoder(pl.LightningModule):
         sample_llk = normalize(sample_llk, min_llk, max_llk)
         sample_rec = normalize(sample_rec, min_rec, max_rec)
         sample_ns = novelty_score(sample_llk, sample_rec)
-        print(sample_ns)
+        # print(sample_ns)
         plt.plot(sample_ns)
-
+        self.log('sample_ns', sample_ns,on_step=False,on_epoch=True)
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
@@ -266,16 +262,48 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 tb_logger = TensorBoardLogger('logs/')
 # init model
 ae = LitAutoEncoder()
+# ae.load_from_checkpoint('epoch_one.ckpt')
 wandb_logger = WandbLogger() 
 # Initialize a trainer
 
-trainer = pl.Trainer(gpus=[2], max_epochs=10, progress_bar_refresh_rate=20,logger=wandb_logger,)
+trainer = pl.Trainer(gpus=[2], max_epochs=2, progress_bar_refresh_rate=20,logger=wandb_logger)
 
-train = DataLoader(BrainnomalyDataset('/mnt/luowh/data/nc/'),num_workers =16,pin_memory=True)
+# train = DataLoader(BrainnomalyDataset('/mnt/luowh/data/nc/'),num_workers =16,pin_memory=True)
 # test = DataLoader(BrainnomalyDataset('data/UCSD_Anomaly_Dataset.v1p2/UCSDped2/Test1'),num_workers =16,pin_memory=True)
 # Train the model ⚡
-trainer.fit(ae, train)
+# trainer.fit(ae, train)
 
-trainer.test(ae,test_dataloaders=test)
+# trainer.test(ae,test_dataloaders=test)
 
 # %%
+root_dir = '/mnt/luowh/data/brain_test/MICCAI_BraTS2020_TrainingData'
+result =[]
+brains = sorted([d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))])
+for d in brains:
+    test = DataLoader(BrainnomalyTestDataset(os.path.join(root_dir, d)),num_workers =16,pin_memory=True)
+    pred = trainer.test(ae,test_dataloaders=test,ckpt_path = 'epoch_one.ckpt')
+
+    pred[0]['sample_ns']
+
+    # load gt
+    img_list = glob(join(root_dir,d,'*seg.nii.gz'))
+    image = sitk.ReadImage(img_list[0])
+    nda = sitk.GetArrayFromImage(image)
+    n_imgs = nda.shape[0]
+    gt = []
+    for i in range(0,n_imgs):
+        if nda[i].sum() == 0:
+            gt.append(0)
+        else:
+            gt.append(1)
+    
+    #compare result
+    result.append(roc_auc_score(gt,pred[0]['sample_ns']))
+
+
+# %%
+# gt = []
+
+# %%
+
+# roc_auc_score(gt,result[0]['sample_ns'])
