@@ -5,40 +5,27 @@
 from glob import glob
 from os.path import join
 import numpy as np
-from pytorch_lightning import callbacks
-import skimage.io as io
 import torch
 from skimage.transform import resize
-from torchvision import transforms
-
 from datasets.transforms import ToCrops
 from datasets.transforms import ToFloatTensor3D
-
-
-# %%
 import os
-
 import torch
-from torch import nn
-from torch.nn import functional as F
-from torch.utils.data import DataLoader, dataloader, random_split
-from torchvision.datasets import MNIST
-from torchvision import transforms
+from torch.utils.data import DataLoader
 import pytorch_lightning as pl
-from pytorch_lightning.metrics.functional import accuracy
+import torch.utils.data as data
+import os
+import SimpleITK as sitk
+# %%
+
 # from pl_bolts.datasets import DummyDataset
 
 # %% [markdown]
 # ---
 # ## Data
-import SimpleITK as sitk
+
 
 # %%
-from PIL import Image
-import torch.utils.data as data
-import os
-import torchvision.transforms as transforms
-import torch
 
 class BrainnomalyDataset(data.Dataset):
     '''
@@ -220,22 +207,6 @@ class LitAutoEncoder(pl.LightningModule):
         return tot_loss
 
 
-    # def validation_step(self, batch, batch_idx):
-    #     x, y = batch
-
-    #     x_r, z, z_dist = self.model(x.squeeze(0))
-
-
-    #     rec_loss = self.reconstruction_loss_fn(x, x_r)
-    #     arg_loss = self.autoregression_loss_fn(z, z_dist)
-    #     tot_loss = rec_loss + 1 * arg_loss
-
-
-    #     self.log('val_reconstruction_loss_fn', rec_loss)
-    #     self.log('val_autoregression_loss', arg_loss)
-    #     return tot_loss
-
-
     def test_step(self, batch, batch_idx):
         x, _ = batch
         # import pdb;pdb.set_trace()
@@ -273,7 +244,6 @@ class LitAutoEncoder(pl.LightningModule):
             sample_llk[index] = results_accumulator_llk.get_next()
             sample_rec[index] = results_accumulator_rec.get_next()
         min_llk, max_llk= sample_llk.min(),sample_rec.min()
-    
         min_rec, max_rec = sample_llk.max(),sample_rec.max()
 
         sample_llk = normalize(sample_llk, min_llk, max_llk)
@@ -306,6 +276,6 @@ train = DataLoader(BrainnomalyDataset('/mnt/luowh/data/nc/'),num_workers =16,pin
 # Train the model ⚡
 trainer.fit(ae, train)
 
-# trainer.test(ae,test_dataloaders=test)
+trainer.test(ae,test_dataloaders=test)
 
 # %%
